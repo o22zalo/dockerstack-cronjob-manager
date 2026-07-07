@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import path from "node:path";
+import { createServer } from "node:http";
 import { loadConfig } from "../../src/config/env.js";
 import { createLogger } from "../../src/logger.js";
 import { buildContainer } from "../../src/container.js";
@@ -134,6 +135,106 @@ describe("Business: cURL Export", () => {
     expect(r.json().unmasked).toContain("ghp_1234567890abcdef");
   });
 
+  it("builds GitHub target curl with saved token", async () => {
+    const token = await app.inject({
+      method: "POST", url: "/api/github-tokens", headers: auth,
+      payload: { label: "gh-curl-token", secret: "ghp_saved_token_1234" },
+    });
+    const r = await app.inject({
+      method: "POST",
+      url: "/api/curl",
+      headers: auth,
+      payload: {
+        url: "https://api.github.com/repos/o/r/actions/workflows/d.yml/dispatches",
+        requestMethod: 1,
+        githubTokenId: token.json().id,
+        extendedData: { body: "{\"ref\":\"main\"}" },
+      },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().masked).toContain("authorization: Bearer ****1234");
+    expect(r.json().masked).toContain("x-github-api-version: 2022-11-28");
+    expect(r.json().unmasked).toContain("ghp_saved_token_1234");
+  });
+
+  it("builds cron-job.org create curl with account API key", async () => {
+    const acc = await app.inject({
+      method: "POST", url: "/api/accounts", headers: auth,
+      payload: { label: "cron-curl-account", secret: "cron_api_key_1234" },
+    });
+    const token = await app.inject({
+      method: "POST", url: "/api/github-tokens", headers: auth,
+      payload: { label: "gh-cron-curl-token", secret: "ghp_cron_target_1234" },
+    });
+    const r = await app.inject({
+      method: "POST",
+      url: "/api/curl/cronjob",
+      headers: auth,
+      payload: {
+        accountId: acc.json().id,
+        title: "[GitHub] repo: deploy.yml",
+        url: "https://api.github.com/repos/o/r/actions/workflows/deploy.yml/dispatches",
+        requestMethod: 1,
+        schedule: { minutes: [58] },
+        saveResponses: true,
+        githubTokenId: token.json().id,
+        extendedData: { body: "{\"ref\":\"main\"}" },
+      },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().masked).toContain("/jobs");
+    expect(r.json().masked).toContain("authorization: Bearer ****1234");
+    expect(r.json().masked).toContain("\"schedule\":{\"timezone\":\"UTC\",\"expiresAt\":0");
+    expect(r.json().masked).toContain("\"authorization\":\"Bearer ****1234\"");
+    expect(r.json().masked).not.toContain("ghp_cron_target_1234");
+    expect(r.json().masked).toContain("<jobId>");
+    expect(r.json().unmasked).toContain("cron_api_key_1234");
+    expect(r.json().unmasked).toContain("ghp_cron_target_1234");
+  });
+
+  it("test-runs target request with saved GitHub token", async () => {
+    const seen: { method?: string; auth?: string; body?: string } = {};
+    const target = createServer((req, res) => {
+      seen.method = req.method;
+      seen.auth = req.headers.authorization;
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        seen.body = body;
+        res.setHeader("x-token", "secret-response-token");
+        res.end("ok");
+      });
+    });
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = target.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      const token = await app.inject({
+        method: "POST", url: "/api/github-tokens", headers: auth,
+        payload: { label: "gh-test-run-token", secret: "ghp_test_run_1234" },
+      });
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/curl/test-run",
+        headers: auth,
+        payload: {
+          url: `http://127.0.0.1:${port}/dispatches`,
+          requestMethod: 1,
+          githubTokenId: token.json().id,
+          extendedData: { body: "{\"ref\":\"main\"}" },
+        },
+      });
+      expect(r.statusCode).toBe(200);
+      expect(seen.method).toBe("POST");
+      expect(seen.auth).toBe("Bearer ghp_test_run_1234");
+      expect(seen.body).toBe("{\"ref\":\"main\"}");
+      expect(r.json().bodySnippet).toBe("ok");
+      expect(r.json().headers["x-token"]).toBe("****oken");
+    } finally {
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+
   it("builds curl for existing job", async () => {
     // Create account + job first
     const acc = await app.inject({
@@ -149,6 +250,34 @@ describe("Business: cURL Export", () => {
     const r = await app.inject({ method: "GET", url: `/api/jobs/${jobId}/curl`, headers: auth });
     expect(r.statusCode).toBe(200);
     expect(r.json().masked).toContain("curl");
+  });
+
+  it("injects saved GitHub token headers when creating dispatch job", async () => {
+    const acc = await app.inject({
+      method: "POST", url: "/api/accounts", headers: auth,
+      payload: { label: "gh-cron-acct", secret: "cron-key" },
+    });
+    const token = await app.inject({
+      method: "POST", url: "/api/github-tokens", headers: auth,
+      payload: { label: "gh-token", secret: "ghp_live_token" },
+    });
+    const job = await app.inject({
+      method: "POST", url: "/api/jobs", headers: auth,
+      payload: {
+        accountId: acc.json().id,
+        title: "[GitHub] repo: ci.yml",
+        url: "https://api.github.com/repos/o/r/actions/workflows/ci.yml/dispatches",
+        requestMethod: 1,
+        extendedData: { body: '{"ref":"main"}' },
+        githubTokenId: token.json().id,
+      },
+    });
+    expect(job.statusCode).toBe(201);
+    const fakeJob = fake.jobs.get(Number(job.json().id));
+    expect(fakeJob?.extendedData?.headers?.authorization).toBe("Bearer ghp_live_token");
+    expect(fakeJob?.extendedData?.headers?.accept).toBe("application/vnd.github+json");
+    expect(fakeJob?.extendedData?.headers?.["x-github-api-version"]).toBe("2022-11-28");
+    expect(job.json().extendedData?.headers).toBeUndefined();
   });
 });
 

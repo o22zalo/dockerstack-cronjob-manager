@@ -114,3 +114,17 @@ The `api` helper uses the `/proxy/[...path]` route which injects `x-api-secret` 
 - Padding: `p-container-padding` (CSS custom property)
 - Gutter: `space-y-gutter` between sections
 - Tables use `overflow-x-auto` wrapper for mobile
+
+---
+
+## 7. Notification and Confirmation Messages
+
+**Rule:** All user-facing notification, confirmation, and warning messages must use the app's own UI model/modal. Do not use browser-native message APIs.
+
+**Why:** Browser-native dialogs are inconsistent, block the UI thread, cannot follow the app theme, and are hard to test.
+
+**Implementation:**
+- ✅ Use a themed app component such as `ConfirmDialog` for confirmation flows
+- ✅ Render API errors and status messages inside the page or modal using theme tokens
+- ❌ DO NOT use `alert()`, `confirm()`, or `prompt()` in frontend code
+- ❌ DO NOT rely on browser-native messages for delete confirmations, warnings, validation, or success/error feedback

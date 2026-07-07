@@ -2,12 +2,18 @@
 
 These rules are mandatory for ANY AI Agent (Codex, Claude Code, Antigravity, Cursor, etc.) working in this project.
 
-## 1) Always update `.git/vstool-commit-template.txt`
+## 1) Cronjob docs first
+
+- Before changing cronjob-related code, read the relevant docs under `docs/cron-jobs`.
+- For UI work, read `docs/cron-jobs/ui/UI_RULES.md` before editing frontend files.
+- For API/backend work, read the matching docs under `docs/cron-jobs/api` and `docs/cron-jobs/logging.md` when relevant.
+
+## 2) Always update `.git/vstool-commit-template.txt`
 
 - Summarize only the changes made in the session that have NOT been committed yet. Do NOT include changes from previous commits that have already been finalized.
 - Write the commit summary directly to `.git/vstool-commit-template.txt`. Do NOT commit the changes; let the user review and commit them manually.
 
-## 2) Message format
+## 3) Message format
 
 Use conversational summary content (not commit-style), aligned with what the AI Agent says to the user.
 
@@ -31,6 +37,6 @@ Formatting rules:
 - File list can be plain filenames or paths.
 - Do not use `<type>: <summary>` commit prefix.
 
-## 3) Completion gate
+## 4) Completion gate
 
 The AI Agent should treat the task as incomplete until `.git/vstool-commit-template.txt` is updated (write or append) to reflect the latest work.

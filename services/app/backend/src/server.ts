@@ -26,6 +26,16 @@ export function buildServer(c: Container): App {
 
   void app.register(cors, { origin: true });
 
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    if (body === "") return done(null, undefined);
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   // Global error handler — log all unhandled route errors to file + appLog
   app.setErrorHandler((err, req, reply) => {
     req.log.error({

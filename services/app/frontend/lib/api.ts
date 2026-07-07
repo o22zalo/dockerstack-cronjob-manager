@@ -172,15 +172,26 @@ export interface CurlResult {
   unmasked: string;
 }
 
+export interface TestRunResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  bodySnippet: string;
+  durationMs: number;
+}
+
 // ─── API client ──────────────────────────────────────────────────
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers =
+    init.body === undefined
+      ? init.headers
+      : {
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        };
   const res = await fetch(`/proxy/${path.replace(/^\/+/, "")}`, {
     ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;

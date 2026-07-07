@@ -76,3 +76,40 @@ export function Spinner() {
     </span>
   );
 }
+
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full max-w-sm">
+        <div className="px-4 py-3 border-b border-outline-variant/20">
+          <h3 className="text-h2 text-on-surface">{title}</h3>
+        </div>
+        <div className="p-4 space-y-4">
+          <div className="text-body-sm text-on-surface-variant">{message}</div>
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm">
+              {cancelLabel}
+            </button>
+            <button onClick={onConfirm} className="px-4 py-1.5 rounded-lg bg-error text-on-error text-body-sm">
+              {confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

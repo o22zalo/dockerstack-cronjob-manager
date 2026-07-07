@@ -123,7 +123,8 @@ export class JobsService {
         headers: {
           ...extendedData?.headers,
           authorization: `Bearer ${token.secret}`,
-          accept: "application/vnd.github.v3+json",
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
         },
       };
     }

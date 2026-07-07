@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Topbar } from "@/components/Topbar";
-import { Tag } from "@/components/ui";
+import { ConfirmDialog, Tag } from "@/components/ui";
 import { api, type Resource } from "@/lib/api";
 
 const TABS = [
@@ -21,6 +21,7 @@ export default function ResourcesPage() {
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [editing, setEditing] = useState<Resource | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -37,10 +38,15 @@ export default function ResourcesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, q]);
 
-  const remove = async (id: string) => {
-    if (!confirm("Delete this resource?")) return;
-    await api.del(`${tab}/${id}`);
-    load();
+  const remove = async () => {
+    if (!deleteId) return;
+    try {
+      await api.del(`${tab}/${deleteId}`);
+      setDeleteId(null);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
   };
 
   const exportUrl = `/proxy/${tab}/batch-export?format=csv`;
@@ -164,7 +170,7 @@ export default function ResourcesPage() {
                           <span className="material-symbols-outlined text-[16px]">edit</span>
                         </button>
                         <button
-                          onClick={() => remove(r.id)}
+                          onClick={() => setDeleteId(r.id)}
                           className="text-outline hover:text-error transition-colors"
                           title="Delete"
                         >
@@ -199,6 +205,15 @@ export default function ResourcesPage() {
             setShowImport(false);
             load();
           }}
+        />
+      )}
+      {deleteId && (
+        <ConfirmDialog
+          title="Delete resource"
+          message="Delete this resource?"
+          confirmLabel="Delete"
+          onCancel={() => setDeleteId(null)}
+          onConfirm={remove}
         />
       )}
     </>

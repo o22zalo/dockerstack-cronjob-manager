@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
-import { Tag, Toggle, StatusDot } from "@/components/ui";
+import { ConfirmDialog, Tag, Toggle, StatusDot } from "@/components/ui";
 import {
   api,
   type JobMeta,
@@ -18,6 +18,7 @@ import {
   type AzureProject,
   type AzurePipeline,
   type CurlResult,
+  type TestRunResult,
   REQUEST_METHODS,
 } from "@/lib/api";
 
@@ -44,6 +45,7 @@ function CronjobsInner() {
   const [err, setErr] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const [logsFor, setLogsFor] = useState<JobMeta | null>(null);
+  const [deleteJob, setDeleteJob] = useState<JobMeta | null>(null);
 
   const load = async () => {
     try {
@@ -77,10 +79,15 @@ function CronjobsInner() {
     catch (e) { setErr((e as Error).message); }
   };
 
-  const remove = async (job: JobMeta) => {
-    if (!confirm(`Delete job "${job.title}"?`)) return;
-    await api.del(`jobs/${job.id}`);
-    load();
+  const remove = async () => {
+    if (!deleteJob) return;
+    try {
+      await api.del(`jobs/${deleteJob.id}`);
+      setDeleteJob(null);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
   };
 
   const accountLabel = (id: string) => accounts.find((a) => a.id === id)?.label ?? id.slice(0, 8);
@@ -147,7 +154,7 @@ function CronjobsInner() {
                         <button onClick={() => setLogsFor(j)} className="text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100" title="Logs">
                           <span className="material-symbols-outlined text-[16px]">list_alt</span>
                         </button>
-                        <button onClick={() => remove(j)} className="text-outline hover:text-error transition-colors opacity-0 group-hover:opacity-100" title="Delete">
+                        <button onClick={() => setDeleteJob(j)} className="text-outline hover:text-error transition-colors opacity-0 group-hover:opacity-100" title="Delete">
                           <span className="material-symbols-outlined text-[16px]">delete</span>
                         </button>
                         <Toggle checked={j.enabled} onChange={(v) => toggle(j, v)} />
@@ -166,6 +173,15 @@ function CronjobsInner() {
 
       {showNew && <NewJobModal accounts={accounts} githubTokens={githubTokens} azurePats={azurePats} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); }} />}
       {logsFor && <JobLogsModal job={logsFor} onClose={() => setLogsFor(null)} />}
+      {deleteJob && (
+        <ConfirmDialog
+          title="Delete job"
+          message={`Delete job "${deleteJob.title}"?`}
+          confirmLabel="Delete"
+          onCancel={() => setDeleteJob(null)}
+          onConfirm={remove}
+        />
+      )}
     </>
   );
 }
@@ -182,30 +198,81 @@ export default function CronjobsPage() {
 function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className={`bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full ${wide ? "max-w-2xl" : "max-w-md"}`}>
-        <div className="flex justify-between items-center px-4 py-3 border-b border-outline-variant/20">
+      <div className={`bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full max-h-[calc(100vh-32px)] flex flex-col ${wide ? "max-w-2xl" : "max-w-md"}`}>
+        <div className="flex justify-between items-center px-4 py-3 border-b border-outline-variant/20 shrink-0">
           <h3 className="text-h2 text-on-surface">{title}</h3>
           <button onClick={onClose} className="text-outline hover:text-on-surface">
             <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="p-4 overflow-y-auto min-h-0">{children}</div>
       </div>
     </div>
   );
 }
 
-type SchedulePreset = "5min" | "15min" | "hourly" | "daily" | "weekly" | "custom";
+type SchedulePreset = "5min" | "15min" | "hourly" | "handoff58" | "morning" | "afternoon" | "workday" | "daily" | "weekly" | "cron" | "custom";
 type JobTab = "basic" | "schedule" | "headers" | "gh" | "azure";
 
-const SCHEDULE_PRESETS: Record<SchedulePreset, { label: string; schedule: JobSchedule }> = {
-  "5min": { label: "Every 5 minutes", schedule: { minutes: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] } },
-  "15min": { label: "Every 15 minutes", schedule: { minutes: [0, 15, 30, 45] } },
-  hourly: { label: "Every hour", schedule: { minutes: [0] } },
-  daily: { label: "Daily at midnight", schedule: { hours: [0], minutes: [0] } },
-  weekly: { label: "Weekly (Mon at midnight)", schedule: { wdays: [1], hours: [0], minutes: [0] } },
-  custom: { label: "Custom", schedule: {} },
+const SCHEDULE_PRESETS: Record<SchedulePreset, { label: string; hint: string; schedule: JobSchedule }> = {
+  "5min": { label: "Every 5 minutes", hint: "Chạy mỗi 5 phút.", schedule: { minutes: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] } },
+  "15min": { label: "Every 15 minutes", hint: "Chạy ở phút 0, 15, 30, 45 của mỗi giờ.", schedule: { minutes: [0, 15, 30, 45] } },
+  hourly: { label: "Every hour", hint: "Chạy mỗi giờ, đúng phút 0.", schedule: { minutes: [0] } },
+  handoff58: { label: "Actions handoff :58", hint: "Chạy ở phút 58 mỗi giờ để bật instance mới trước khi GitHub Actions/Azure Pipeline gần chạm giới hạn 60 phút.", schedule: { minutes: [58] } },
+  morning: { label: "Morning hours", hint: "Chạy mỗi giờ trong buổi sáng, từ 06:00 đến 11:00.", schedule: { hours: [6, 7, 8, 9, 10, 11], minutes: [0] } },
+  afternoon: { label: "Afternoon hours", hint: "Chạy mỗi giờ trong buổi chiều, từ 12:00 đến 17:00.", schedule: { hours: [12, 13, 14, 15, 16, 17], minutes: [0] } },
+  workday: { label: "Daytime only", hint: "Chỉ chạy ban ngày từ 06:00 đến 18:00, buổi tối nghỉ.", schedule: { hours: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], minutes: [0] } },
+  daily: { label: "Daily at midnight", hint: "Chạy mỗi ngày lúc 00:00.", schedule: { hours: [0], minutes: [0] } },
+  weekly: { label: "Weekly (Mon at midnight)", hint: "Chạy mỗi thứ Hai lúc 00:00.", schedule: { wdays: [1], hours: [0], minutes: [0] } },
+  cron: { label: "Cron expression", hint: "Nhập cron 5 field kiểu Linux: phút giờ ngày-tháng tháng thứ. Ví dụ: */58 * * * *.", schedule: {} },
+  custom: { label: "Custom", hint: "Tự nhập danh sách phút, giờ, ngày, tháng được phép chạy.", schedule: {} },
 };
+
+function parseCronPart(part: string, min: number, max: number): number[] | undefined {
+  if (part === "*") return undefined;
+  const out = new Set<number>();
+  for (const raw of part.split(",")) {
+    const [rangeRaw, stepRaw] = raw.split("/");
+    const step = stepRaw ? Number(stepRaw) : 1;
+    if (!Number.isInteger(step) || step < 1) return [];
+    const [startRaw, endRaw] = rangeRaw === "*" ? [String(min), String(max)] : rangeRaw.split("-");
+    const start = Number(startRaw);
+    const end = Number(endRaw ?? startRaw);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) return [];
+    for (let n = start; n <= end; n += step) out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function parseCronSchedule(expr: string): JobSchedule {
+  const compact = expr.trim();
+  const fields = compact === "*****" || compact === "******" ? ["*", "*", "*", "*", "*"] : compact.split(/\s+/);
+  const [minute, hour, mday, month, wday] = fields.length === 6 ? fields.slice(1) : fields;
+  if (![5, 6].includes(fields.length)) throw new Error("Cron schedule must have 5 fields.");
+  const schedule: JobSchedule = {};
+  const minutes = parseCronPart(minute, 0, 59);
+  const hours = parseCronPart(hour, 0, 23);
+  const mdays = parseCronPart(mday, 1, 31);
+  const months = parseCronPart(month, 1, 12);
+  const wdays = parseCronPart(wday, 0, 6);
+  if ([minutes, hours, mdays, months, wdays].some((v) => Array.isArray(v) && v.length === 0)) {
+    throw new Error("Cron schedule has an invalid field.");
+  }
+  if (minutes) schedule.minutes = minutes;
+  if (hours) schedule.hours = hours;
+  if (mdays) schedule.mdays = mdays;
+  if (months) schedule.months = months;
+  if (wdays) schedule.wdays = wdays;
+  return schedule;
+}
+
+function compactJsonBody(body: string) {
+  try {
+    return JSON.stringify(JSON.parse(body));
+  } catch {
+    return body;
+  }
+}
 
 function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
   accounts: Resource[]; githubTokens: Resource[]; azurePats: Resource[]; onClose: () => void; onSaved: () => void;
@@ -219,13 +286,17 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
   const [body, setBody] = useState("");
   const [saveResponses, setSaveResponses] = useState(true);
   const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>("hourly");
+  const [cronExpr, setCronExpr] = useState("* * * * *");
   const [customHours, setCustomHours] = useState("");
   const [customMinutes, setCustomMinutes] = useState("0");
   const [customMdays, setCustomMdays] = useState("");
+  const [customMonths, setCustomMonths] = useState("");
   const [customWdays, setCustomWdays] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [curlResult, setCurlResult] = useState<CurlResult | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testRunResult, setTestRunResult] = useState<TestRunResult | null>(null);
   const [tab, setTab] = useState<JobTab>("basic");
 
   // GitHub fetch state
@@ -247,6 +318,10 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
   const [azPipelines, setAzPipelines] = useState<AzurePipeline[]>([]);
   const [azSelectedPipeline, setAzSelectedPipeline] = useState("");
   const [azLoading, setAzLoading] = useState(false);
+
+  useEffect(() => {
+    if (!accountId && accounts[0]?.id) setAccountId(accounts[0].id);
+  }, [accountId, accounts]);
 
   const inputCls = "w-full bg-surface-container border border-outline-variant/30 rounded-lg px-3 py-1.5 text-body-sm text-on-surface focus:ring-2 focus:ring-primary outline-none";
   const tabCls = (active: boolean) =>
@@ -298,15 +373,25 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
   }, []);
 
   const buildSchedule = (): JobSchedule | undefined => {
+    if (schedulePreset === "cron") return parseCronSchedule(cronExpr);
     if (schedulePreset === "custom") {
       const s: JobSchedule = {};
       if (customMinutes !== "") s.minutes = customMinutes.split(",").map(Number).filter((n) => !isNaN(n));
       if (customHours !== "") s.hours = customHours.split(",").map(Number).filter((n) => !isNaN(n));
       if (customMdays !== "") s.mdays = customMdays.split(",").map(Number).filter((n) => !isNaN(n));
+      if (customMonths !== "") s.months = customMonths.split(",").map(Number).filter((n) => !isNaN(n));
       if (customWdays !== "") s.wdays = customWdays.split(",").map(Number).filter((n) => !isNaN(n));
       return s;
     }
     return SCHEDULE_PRESETS[schedulePreset].schedule;
+  };
+
+  const schedulePreview = () => {
+    try {
+      return JSON.stringify(buildSchedule());
+    } catch (e) {
+      return (e as Error).message;
+    }
   };
 
   // GitHub dispatch preset builder (with fetch dropdown data)
@@ -323,7 +408,7 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
     const payload: Record<string, unknown> = { ref: ghRef || "main" };
     try { const parsed = JSON.parse(ghInputs || "{}"); if (Object.keys(parsed).length > 0) payload.inputs = parsed; } catch {}
     setUrl(apiUrl); setTitle(`[GitHub] ${repo}: ${wfId}`);
-    setRequestMethod(1 as RequestMethodValue); setHeadersJson(hdrsJson); setBody(JSON.stringify(payload, null, 2));
+    setRequestMethod(1 as RequestMethodValue); setHeadersJson(hdrsJson); setBody(JSON.stringify(payload));
     setTab("basic");
   };
 
@@ -341,8 +426,7 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
     setTab("basic");
   };
 
-  // cURL export
-  const exportCurl = async () => {
+  const resolveOutboundRequest = () => {
     let finalHeadersJson = headersJson;
     let finalBody = body;
     let finalRequestMethod = requestMethod;
@@ -366,52 +450,68 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
       finalBody = "{}";
     }
     let parsedHeaders: Record<string, string> | undefined;
-    if (finalHeadersJson.trim()) try { parsedHeaders = JSON.parse(finalHeadersJson); } catch {}
+    if (finalHeadersJson.trim()) parsedHeaders = JSON.parse(finalHeadersJson);
+    const parsedBody = finalBody.trim() ? compactJsonBody(finalBody) : undefined;
+    return { finalHeadersJson, finalBody: parsedBody, finalRequestMethod, finalUrl, parsedHeaders };
+  };
+
+  const buildJobPayload = () => {
+    const outbound = resolveOutboundRequest();
+    return {
+      accountId,
+      title: tab === "basic" ? title : tab === "gh"
+        ? `[GitHub] ${ghSelectedRepo.split("/")[1]}: ${outbound.finalUrl.split("/workflows/")[1]?.split("/")[0] ?? ghSelectedWorkflow}`
+        : tab === "azure"
+          ? `[Azure] ${azSelectedProject}: ${azPipelines.find((p) => String(p.id) === azSelectedPipeline)?.name ?? azSelectedPipeline}`
+          : title,
+      url: outbound.finalUrl,
+      tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      requestMethod: outbound.finalRequestMethod,
+      schedule: buildSchedule(),
+      extendedData: outbound.parsedHeaders || outbound.finalBody ? { headers: outbound.parsedHeaders, body: outbound.finalBody } : undefined,
+      saveResponses,
+      githubTokenId: ghTokenId || undefined,
+    };
+  };
+
+  // cURL export
+  const exportTargetCurl = async () => {
     try {
+      const outbound = resolveOutboundRequest();
       const result = await api.post<CurlResult>("curl", {
-        url: finalUrl, requestMethod: finalRequestMethod,
-        extendedData: parsedHeaders || finalBody ? { headers: parsedHeaders, body: finalBody } : undefined,
+        url: outbound.finalUrl, requestMethod: outbound.finalRequestMethod,
+        extendedData: outbound.parsedHeaders || outbound.finalBody ? { headers: outbound.parsedHeaders, body: outbound.finalBody } : undefined,
+        githubTokenId: ghTokenId || undefined,
       });
       setCurlResult(result);
-    } catch (e) { setErr(`cURL export failed: ${(e as Error).message}`); }
+    } catch (e) { setErr(`Target cURL export failed: ${(e as Error).message}`); }
+  };
+
+  const exportCronjobCurl = async () => {
+    try {
+      setCurlResult(await api.post<CurlResult>("curl/cronjob", buildJobPayload()));
+    } catch (e) { setErr(`Cron-job.org cURL export failed: ${(e as Error).message}`); }
+  };
+
+  const testRun = async () => {
+    setTestRunning(true); setErr(null); setTestRunResult(null);
+    try {
+      const outbound = resolveOutboundRequest();
+      setTestRunResult(await api.post<TestRunResult>("curl/test-run", {
+        url: outbound.finalUrl,
+        requestMethod: outbound.finalRequestMethod,
+        extendedData: outbound.parsedHeaders || outbound.finalBody ? { headers: outbound.parsedHeaders, body: outbound.finalBody } : undefined,
+        githubTokenId: ghTokenId || undefined,
+      }));
+    } catch (e) { setErr(`Test Run failed: ${(e as Error).message}`); }
+    setTestRunning(false);
   };
 
   const save = async () => {
     setBusy(true); setErr(null);
-    let finalTitle = title, finalUrl = url, finalHeadersJson = headersJson, finalBody = body, finalRequestMethod = requestMethod;
-    if (tab === "gh") {
-      const repoFullName = ghSelectedRepo; const [owner, repo] = repoFullName.split("/");
-      const wf = ghWorkflows.find((w) => String(w.id) === ghSelectedWorkflow || w.fileName === ghSelectedWorkflow);
-      const wfId = wf?.fileName ?? ghSelectedWorkflow;
-      finalUrl = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${wfId}/dispatches`;
-      finalTitle = `[GitHub] ${repo}: ${wfId}`;
-      finalRequestMethod = 1 as RequestMethodValue;
-      const hdrs: Record<string, string> = { accept: "application/vnd.github.v3+json" };
-      finalHeadersJson = ghTokenId ? "" : JSON.stringify(hdrs);
-      const payload: Record<string, unknown> = { ref: ghRef || "main" };
-      try { const p = JSON.parse(ghInputs || "{}"); if (Object.keys(p).length > 0) payload.inputs = p; } catch {}
-      finalBody = JSON.stringify(payload);
-    } else if (tab === "azure") {
-      const pipeline = azPipelines.find((p) => String(p.id) === azSelectedPipeline);
-      finalUrl = `https://dev.azure.com/${azOrganization}/${azSelectedProject}/_apis/pipelines/${azSelectedPipeline}/runs?api-version=7.1`;
-      finalTitle = `[Azure] ${azSelectedProject}: ${pipeline?.name ?? azSelectedPipeline}`;
-      finalRequestMethod = 1 as RequestMethodValue;
-      finalHeadersJson = azPatId ? "" : JSON.stringify({ "content-type": "application/json" });
-      finalBody = "{}";
-    }
-    let parsedHeaders: Record<string, string> | undefined;
-    let parsedBody: string | undefined;
-    if (finalHeadersJson.trim()) { try { parsedHeaders = JSON.parse(finalHeadersJson); } catch { setErr("Headers must be valid JSON"); setBusy(false); return; } }
-    if (finalBody.trim()) parsedBody = finalBody;
     try {
-      await api.post("jobs", {
-        accountId, title: finalTitle, url: finalUrl,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-        requestMethod: finalRequestMethod, schedule: buildSchedule(),
-        extendedData: parsedHeaders || parsedBody ? { headers: parsedHeaders, body: parsedBody } : undefined,
-        saveResponses,
-        githubTokenId: ghTokenId || undefined,
-      });
+      const payload = buildJobPayload();
+      await api.post("jobs", payload);
       setBusy(false); onSaved();
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
@@ -463,7 +563,7 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
             <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Schedule Preset</span>
             <div className="flex gap-2 flex-wrap">
               {(Object.entries(SCHEDULE_PRESETS) as [SchedulePreset, typeof SCHEDULE_PRESETS[SchedulePreset]][]).map(([key, p]) => (
-                <button key={key} className={tabCls(schedulePreset === key)} onClick={() => setSchedulePreset(key)}>{p.label}</button>
+                <button key={key} className={tabCls(schedulePreset === key)} onClick={() => setSchedulePreset(key)} title={p.hint} aria-label={`${p.label}: ${p.hint}`}>{p.label}</button>
               ))}
             </div>
             {schedulePreset === "custom" && (
@@ -471,10 +571,17 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
                 <label className="block"><span className="text-label-caps text-on-surface-variant block mb-1">Minutes (0-59)</span><input className={inputCls} value={customMinutes} onChange={(e) => setCustomMinutes(e.target.value)} placeholder="0,15,30,45" /></label>
                 <label className="block"><span className="text-label-caps text-on-surface-variant block mb-1">Hours (0-23)</span><input className={inputCls} value={customHours} onChange={(e) => setCustomHours(e.target.value)} placeholder="0,6,12,18" /></label>
                 <label className="block"><span className="text-label-caps text-on-surface-variant block mb-1">Days of month</span><input className={inputCls} value={customMdays} onChange={(e) => setCustomMdays(e.target.value)} placeholder="1,15" /></label>
+                <label className="block"><span className="text-label-caps text-on-surface-variant block mb-1">Months (1-12)</span><input className={inputCls} value={customMonths} onChange={(e) => setCustomMonths(e.target.value)} placeholder="1,4,7,10" /></label>
                 <label className="block"><span className="text-label-caps text-on-surface-variant block mb-1">Days of week (0=Sun)</span><input className={inputCls} value={customWdays} onChange={(e) => setCustomWdays(e.target.value)} placeholder="1-5" /></label>
               </div>
             )}
-            <div className="bg-surface-dim/30 rounded-lg p-2 text-body-xs text-outline font-code">{JSON.stringify(buildSchedule())}</div>
+            {schedulePreset === "cron" && (
+              <label className="block">
+                <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Cron</span>
+                <input className={`${inputCls} font-code`} value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="* * * * *" />
+              </label>
+            )}
+            <div className="bg-surface-dim/30 rounded-lg p-2 text-body-xs text-outline font-code">{schedulePreview()}</div>
           </div>
         )}
 
@@ -608,19 +715,44 @@ function NewJobModal({ accounts, githubTokens, azurePats, onClose, onSaved }: {
             </div>
             <pre className="bg-inverse-surface text-inverse-on-surface font-code text-[11px] rounded-lg p-3 overflow-auto max-h-[200px]">{curlResult.masked}</pre>
             <details>
-              <summary className="text-body-xs text-error cursor-pointer">⚠️ Show with real secrets (unmasked)</summary>
+              <summary className="text-body-xs text-error cursor-pointer">Show with real secrets (unmasked)</summary>
               <pre className="bg-inverse-surface text-inverse-on-surface font-code text-[11px] rounded-lg p-3 overflow-auto max-h-[200px] mt-1">{curlResult.unmasked}</pre>
               <button onClick={() => navigator.clipboard.writeText(curlResult.unmasked)} className="text-body-xs text-primary hover:underline mt-1">Copy unmasked</button>
             </details>
           </div>
         )}
 
+        {testRunResult && (
+          <div className="space-y-2 border-t border-outline-variant/20 pt-3">
+            <div className="flex items-center gap-2">
+              <span className="text-label-caps text-on-surface-variant uppercase">Test Run Result</span>
+              <span className={`text-body-xs rounded px-2 py-0.5 ${testRunResult.statusCode < 400 ? "bg-primary-container text-on-primary-container" : "bg-error-container text-on-error-container"}`}>
+                HTTP {testRunResult.statusCode} · {testRunResult.durationMs}ms
+              </span>
+            </div>
+            <pre className="bg-inverse-surface text-inverse-on-surface font-code text-[11px] rounded-lg p-3 overflow-auto max-h-[180px]">{testRunResult.bodySnippet || "(empty response)"}</pre>
+          </div>
+        )}
+
         {err && <p className="text-error text-body-xs">{err}</p>}
-        <div className="flex justify-between gap-2 pt-2 border-t border-outline-variant/20">
-          <button onClick={exportCurl} disabled={busy}
-            className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm hover:bg-surface-dim flex items-center gap-1">
-            <span className="material-symbols-outlined text-[16px]">terminal</span>Export cURL
-          </button>
+        <div className="flex flex-col sm:flex-row justify-between gap-2 pt-2 border-t border-outline-variant/20">
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={testRun} disabled={busy || testRunning || (tab === "gh" ? (!ghSelectedRepo || !ghSelectedWorkflow) : tab === "azure" ? (!azOrganization || !azSelectedProject || !azSelectedPipeline) : !url)}
+              className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm hover:bg-surface-dim flex items-center gap-1 disabled:opacity-50"
+              title="Chạy thử request đích ngay bây giờ giống nút Test Run của cron-job.org, không tạo cronjob mới.">
+              <span className="material-symbols-outlined text-[16px]">{testRunning ? "progress_activity" : "play_circle"}</span>{testRunning ? "Testing..." : "Test Run"}
+            </button>
+            <button onClick={exportCronjobCurl} disabled={busy || !accountId}
+              className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm hover:bg-surface-dim flex items-center gap-1 disabled:opacity-50"
+              title="Xuất cURL gọi trực tiếp cron-job.org để tạo cronjob này.">
+              <span className="material-symbols-outlined text-[16px]">add_task</span>Export cron-job.org cURL
+            </button>
+            <button onClick={exportTargetCurl} disabled={busy}
+              className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm hover:bg-surface-dim flex items-center gap-1 disabled:opacity-50"
+              title="Xuất cURL của request mà cronjob sẽ thực thi, ví dụ GitHub dispatch.">
+              <span className="material-symbols-outlined text-[16px]">terminal</span>Export Target cURL
+            </button>
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm">Cancel</button>
             <button onClick={save}

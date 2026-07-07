@@ -134,11 +134,23 @@ describe("Cronjob management vs emulator", () => {
     const list = await app.inject({ method: "GET", url: `/api/jobs?accountId=${accountId}`, headers: auth });
     expect(list.json().length).toBe(1);
 
+    const sync = await app.inject({
+      method: "POST",
+      url: `/api/jobs/sync?accountId=${accountId}`,
+      headers: { ...auth, "content-type": "application/json" },
+    });
+    expect(sync.statusCode).toBe(200);
+
     const disable = await app.inject({ method: "POST", url: `/api/jobs/${jobId}/disable`, headers: auth });
     expect(disable.json().enabled).toBe(false);
 
-    const enable = await app.inject({ method: "POST", url: `/api/jobs/${jobId}/enable`, headers: auth });
-    expect(enable.json().enabled).toBe(true);
+    const enableWithEmptyJson = await app.inject({
+      method: "POST",
+      url: `/api/jobs/${jobId}/enable`,
+      headers: { ...auth, "content-type": "application/json" },
+    });
+    expect(enableWithEmptyJson.statusCode).toBe(200);
+    expect(enableWithEmptyJson.json().enabled).toBe(true);
 
     const logs = await app.inject({ method: "GET", url: `/api/jobs/${jobId}/logs`, headers: auth });
     expect(Array.isArray(logs.json())).toBe(true);

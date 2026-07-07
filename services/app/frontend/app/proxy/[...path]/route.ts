@@ -16,15 +16,15 @@ async function handle(req: NextRequest, ctx: { params: { path: string[] } }) {
   const search = req.nextUrl.search;
   const url = `${BACKEND}/api/${path}${search}`;
 
+  const method = req.method;
+  const rawBody =
+    method === "GET" || method === "HEAD" ? undefined : await req.text();
+  const body = rawBody ? rawBody : undefined;
   const headers: Record<string, string> = {
     "x-api-secret": API_SECRET,
   };
   const contentType = req.headers.get("content-type");
-  if (contentType) headers["content-type"] = contentType;
-
-  const method = req.method;
-  const body =
-    method === "GET" || method === "HEAD" ? undefined : await req.text();
+  if (body !== undefined && contentType) headers["content-type"] = contentType;
 
   try {
     const res = await fetch(url, { method, headers, body });

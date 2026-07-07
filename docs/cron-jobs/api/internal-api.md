@@ -54,6 +54,8 @@ Secrets are AES-256-GCM encrypted at rest. API responses return masked values (`
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/curl` | Generate cURL from input config |
+| POST | `/curl/test-run` | Execute target request once without creating a cronjob |
+| POST | `/curl/cronjob` | Generate direct cron-job.org create-job cURL |
 | GET | `/jobs/:jobId/curl` | Generate cURL from existing job |
 
 ### POST /curl Body
@@ -67,7 +69,22 @@ Secrets are AES-256-GCM encrypted at rest. API responses return masked values (`
 }
 ```
 
-Response: `{ "curl": "curl -X GET ...", "curlMasked": "curl -X GET ..." }`
+Response: `{ "masked": "curl -sS ...", "unmasked": "curl -sS ..." }`
+
+### POST /curl/test-run Body
+Same body as `/curl`, plus optional `requestTimeout` seconds.
+
+Response:
+```json
+{
+  "statusCode": 204,
+  "headers": { "x-request-id": "abc" },
+  "bodySnippet": "",
+  "durationMs": 320
+}
+```
+
+This route calls the target API immediately and does not create or update any cronjob.
 
 ---
 
