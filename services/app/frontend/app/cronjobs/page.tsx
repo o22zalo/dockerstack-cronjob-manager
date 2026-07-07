@@ -4,7 +4,16 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { Tag, Toggle, StatusDot } from "@/components/ui";
-import { api, type JobMeta, type Resource, type JobLog } from "@/lib/api";
+import {
+  api,
+  type JobMeta,
+  type Resource,
+  type JobLog,
+  type JobSchedule,
+  type RequestMethodValue,
+  type ExtendedJobData,
+  REQUEST_METHODS,
+} from "@/lib/api";
 
 function relTime(ts?: number, enabled = true) {
   if (!enabled) return "Disabled";
@@ -23,6 +32,7 @@ function CronjobsInner() {
   const params = useSearchParams();
   const [jobs, setJobs] = useState<JobMeta[]>([]);
   const [accounts, setAccounts] = useState<Resource[]>([]);
+  const [githubTokens, setGithubTokens] = useState<Resource[]>([]);
   const [filterAccount, setFilterAccount] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(params.get("new") === "1");
@@ -30,12 +40,14 @@ function CronjobsInner() {
 
   const load = async () => {
     try {
-      const [j, a] = await Promise.all([
+      const [j, a, t] = await Promise.all([
         api.get<JobMeta[]>(`jobs${filterAccount ? `?accountId=${filterAccount}` : ""}`),
         api.get<Resource[]>("accounts"),
+        api.get<Resource[]>("github-tokens"),
       ]);
       setJobs(j);
       setAccounts(a);
+      setGithubTokens(t);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -206,7 +218,7 @@ function CronjobsInner() {
       </main>
 
       {showNew && (
-        <NewJobModal accounts={accounts} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); }} />
+        <NewJobModal accounts={accounts} githubTokens={githubTokens} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); }} />
       )}
       {logsFor && <JobLogsModal job={logsFor} onClose={() => setLogsFor(null)} />}
     </>
@@ -223,10 +235,12 @@ export default function CronjobsPage() {
 
 function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div
         className={`bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full ${wide ? "max-w-2xl" : "max-w-md"}`}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center px-4 py-3 border-b border-outline-variant/20">
           <h3 className="text-h2 text-on-surface">{title}</h3>
@@ -240,71 +254,319 @@ function Modal({ title, children, onClose, wide }: { title: string; children: Re
   );
 }
 
-function NewJobModal({ accounts, onClose, onSaved }: { accounts: Resource[]; onClose: () => void; onSaved: () => void }) {
+type SchedulePreset = "5min" | "15min" | "hourly" | "daily" | "weekly" | "custom";
+
+const SCHEDULE_PRESETS: Record<SchedulePreset, { label: string; schedule: JobSchedule }> = {
+  "5min": { label: "Every 5 minutes", schedule: { minutes: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] } },
+  "15min": { label: "Every 15 minutes", schedule: { minutes: [0, 15, 30, 45] } },
+  hourly: { label: "Every hour", schedule: { minutes: [0] } },
+  daily: { label: "Daily at midnight", schedule: { hours: [0], minutes: [0] } },
+  weekly: { label: "Weekly (Mon at midnight)", schedule: { wdays: [1], hours: [0], minutes: [0] } },
+  custom: { label: "Custom", schedule: {} },
+};
+
+function NewJobModal({ accounts, githubTokens, onClose, onSaved }: { accounts: Resource[]; githubTokens: Resource[]; onClose: () => void; onSaved: () => void }) {
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("https://");
   const [tags, setTags] = useState("");
+  const [requestMethod, setRequestMethod] = useState<RequestMethodValue>(0);
+  const [headersJson, setHeadersJson] = useState("");
+  const [body, setBody] = useState("");
+  const [saveResponses, setSaveResponses] = useState(true);
+  const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>("hourly");
+  const [customHours, setCustomHours] = useState("");
+  const [customMinutes, setCustomMinutes] = useState("0");
+  const [customMdays, setCustomMdays] = useState("");
+  const [customWdays, setCustomWdays] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // GitHub dispatch preset fields
+  const [ghOwner, setGhOwner] = useState("ohau2910-6a");
+  const [ghRepo, setGhRepo] = useState("dockerstack-cronjob-manager");
+  const [ghWorkflow, setGhWorkflow] = useState("deploy.yml");
+  const [ghRef, setGhRef] = useState("main");
+  const [ghTokenId, setGhTokenId] = useState("");
+  const [ghInputs, setGhInputs] = useState("{}");
+
+  const buildSchedule = (): JobSchedule | undefined => {
+    if (schedulePreset === "custom") {
+      const s: JobSchedule = {};
+      if (customMinutes !== "") s.minutes = customMinutes.split(",").map(Number).filter((n) => !isNaN(n));
+      if (customHours !== "") s.hours = customHours.split(",").map(Number).filter((n) => !isNaN(n));
+      if (customMdays !== "") s.mdays = customMdays.split(",").map(Number).filter((n) => !isNaN(n));
+      if (customWdays !== "") s.wdays = customWdays.split(",").map(Number).filter((n) => !isNaN(n));
+      return s;
+    }
+    return SCHEDULE_PRESETS[schedulePreset].schedule;
+  };
+
+  const buildGitHubPayload = (): { url: string; title: string; requestMethod: RequestMethodValue; headersJson: string; body: string } | null => {
+    if (!ghOwner || !ghRepo || !ghWorkflow) return null;
+    const apiUrl = `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/${ghWorkflow}/dispatches`;
+    const hdrs: Record<string, string> = { accept: "application/vnd.github.v3+json" };
+    let hdrsJson = "";
+    if (!ghTokenId) {
+      hdrsJson = JSON.stringify(hdrs, null, 2);
+    }
+    const payload: Record<string, unknown> = { ref: ghRef || "main" };
+    try {
+      const parsed = JSON.parse(ghInputs || "{}");
+      if (Object.keys(parsed).length > 0) payload.inputs = parsed;
+    } catch { /* ignore malformed inputs */ }
+    return { url: apiUrl, title: `[GitHub] ${ghRepo}: ${ghWorkflow}`, requestMethod: 1 as RequestMethodValue, headersJson: hdrsJson, body: JSON.stringify(payload, null, 2) };
+  };
+
+  const applyGitHubPreset = () => {
+    const preset = buildGitHubPayload();
+    if (!preset) {
+      setErr("Fill Owner, Repo, and Workflow ID first.");
+      return;
+    }
+    setUrl(preset.url);
+    setTitle(preset.title);
+    setRequestMethod(preset.requestMethod);
+    setHeadersJson(preset.headersJson);
+    setBody(preset.body);
+    setTab("basic");
+  };
 
   const save = async () => {
     setBusy(true);
     setErr(null);
+    let finalTitle = title;
+    let finalUrl = url;
+    let finalHeadersJson = headersJson;
+    let finalBody = body;
+    let finalRequestMethod = requestMethod;
+    if (tab === "gh") {
+      const preset = buildGitHubPayload();
+      if (preset) {
+        finalTitle = preset.title;
+        finalUrl = preset.url;
+        finalHeadersJson = preset.headersJson;
+        finalBody = preset.body;
+        finalRequestMethod = preset.requestMethod;
+      }
+    }
+    let parsedHeaders: Record<string, string> | undefined;
+    let parsedBody: string | undefined;
+    if (finalHeadersJson.trim()) {
+      try { parsedHeaders = JSON.parse(finalHeadersJson); }
+      catch { setErr("Headers must be valid JSON"); setBusy(false); return; }
+    }
+    if (finalBody.trim()) parsedBody = finalBody;
     try {
       await api.post("jobs", {
         accountId,
-        title,
-        url,
+        title: finalTitle,
+        url: finalUrl,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        requestMethod: finalRequestMethod,
+        schedule: buildSchedule(),
+        extendedData: parsedHeaders || parsedBody ? { headers: parsedHeaders, body: parsedBody } : undefined,
+        saveResponses,
+        githubTokenId: ghTokenId || undefined,
       });
+      setBusy(false);
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
-    } finally {
       setBusy(false);
     }
   };
 
   const inputCls =
     "w-full bg-surface-container border border-outline-variant/30 rounded-lg px-3 py-1.5 text-body-sm text-on-surface focus:ring-2 focus:ring-primary outline-none";
+  const tabCls = (active: boolean) =>
+    `px-3 py-1.5 text-body-sm rounded-lg border transition-colors ${
+      active
+        ? "bg-primary text-on-primary border-primary"
+        : "bg-surface-container border-outline-variant/30 text-on-surface-variant hover:bg-surface-dim"
+    }`;
+  const [tab, setTab] = useState<"basic" | "schedule" | "headers" | "gh">("basic");
 
   return (
-    <Modal title="New Cronjob" onClose={onClose}>
+    <Modal title="New Cronjob" onClose={onClose} wide>
       <div className="space-y-3">
         {accounts.length === 0 && (
           <p className="text-error text-body-xs">Add a cronjob account under Resources first.</p>
         )}
-        <label className="block">
-          <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Account</span>
-          <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Title</span>
-          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </label>
-        <label className="block">
-          <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Target URL</span>
-          <input className={`${inputCls} font-code`} value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <label className="block">
-          <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Tags</span>
-          <input className={inputCls} value={tags} onChange={(e) => setTags(e.target.value)} />
-        </label>
+
+        {/* Tab navigation */}
+        <div className="flex gap-2 flex-wrap border-b border-outline-variant/20 pb-3">
+          <button className={tabCls(tab === "basic")} onClick={() => setTab("basic")}>Basic</button>
+          <button className={tabCls(tab === "schedule")} onClick={() => setTab("schedule")}>Schedule</button>
+          <button className={tabCls(tab === "headers")} onClick={() => setTab("headers")}>Method & Data</button>
+          <button className={tabCls(tab === "gh")} onClick={() => setTab("gh")}>GitHub Dispatch</button>
+        </div>
+
+        {/* Tab: Basic */}
+        {tab === "basic" && (
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Account</span>
+              <select className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Title</span>
+              <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Target URL</span>
+              <input className={`${inputCls} font-code`} value={url} onChange={(e) => setUrl(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Tags</span>
+              <input className={inputCls} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="comma, separated" />
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={saveResponses} onChange={(e) => setSaveResponses(e.target.checked)}
+                className="rounded border-outline-variant/30" />
+              <span className="text-body-sm text-on-surface-variant">Save response headers & body</span>
+            </label>
+          </div>
+        )}
+
+        {/* Tab: Schedule */}
+        {tab === "schedule" && (
+          <div className="space-y-3">
+            <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Schedule Preset</span>
+            <div className="flex gap-2 flex-wrap">
+              {(Object.entries(SCHEDULE_PRESETS) as [SchedulePreset, typeof SCHEDULE_PRESETS[SchedulePreset]][]).map(([key, p]) => (
+                <button key={key} className={tabCls(schedulePreset === key)} onClick={() => setSchedulePreset(key)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {schedulePreset === "custom" && (
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                <label className="block">
+                  <span className="text-label-caps text-on-surface-variant block mb-1">Minutes (0-59, comma)</span>
+                  <input className={inputCls} value={customMinutes} onChange={(e) => setCustomMinutes(e.target.value)} placeholder="0,15,30,45" />
+                </label>
+                <label className="block">
+                  <span className="text-label-caps text-on-surface-variant block mb-1">Hours (0-23, comma)</span>
+                  <input className={inputCls} value={customHours} onChange={(e) => setCustomHours(e.target.value)} placeholder="* or 0,6,12,18" />
+                </label>
+                <label className="block">
+                  <span className="text-label-caps text-on-surface-variant block mb-1">Days of month (1-31, comma)</span>
+                  <input className={inputCls} value={customMdays} onChange={(e) => setCustomMdays(e.target.value)} placeholder="* or 1,15" />
+                </label>
+                <label className="block">
+                  <span className="text-label-caps text-on-surface-variant block mb-1">Days of week (0=Sun, comma)</span>
+                  <input className={inputCls} value={customWdays} onChange={(e) => setCustomWdays(e.target.value)} placeholder="* or 1-5 (weekdays)" />
+                </label>
+              </div>
+            )}
+            <div className="bg-surface-dim/30 rounded-lg p-2 text-body-xs text-outline font-code">
+              {JSON.stringify(buildSchedule())}
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Method & Data */}
+        {tab === "headers" && (
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Request Method</span>
+              <select className={inputCls} value={requestMethod}
+                onChange={(e) => setRequestMethod(Number(e.target.value) as RequestMethodValue)}>
+                {(Object.entries(REQUEST_METHODS) as [string, string][]).map(([v, label]) => (
+                  <option key={v} value={v}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Custom Headers (JSON)</span>
+              <textarea
+                className={`${inputCls} font-code min-h-[80px]`}
+                value={headersJson}
+                onChange={(e) => setHeadersJson(e.target.value)}
+                placeholder={'{"authorization":"Bearer ...","accept":"application/json"}'}
+              />
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant uppercase block mb-1">Request Body</span>
+              <textarea
+                className={`${inputCls} font-code min-h-[100px]`}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="Raw request body (for POST/PUT/PATCH)"
+              />
+            </label>
+          </div>
+        )}
+
+        {/* Tab: GitHub Dispatch */}
+        {tab === "gh" && (
+          <div className="space-y-3">
+            <p className="text-body-xs text-outline">
+              Creates a cron job that POSTs to the GitHub API to dispatch a workflow.
+              Fill in the fields below, then click &quot;Apply&quot; to populate the URL, method, headers, and body.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-label-caps text-on-surface-variant block mb-1">Owner</span>
+                <input className={inputCls} value={ghOwner} onChange={(e) => setGhOwner(e.target.value)} placeholder="org or user" />
+              </label>
+              <label className="block">
+                <span className="text-label-caps text-on-surface-variant block mb-1">Repo</span>
+                <input className={inputCls} value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} placeholder="repo-name" />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant block mb-1">Workflow ID / filename</span>
+              <input className={inputCls} value={ghWorkflow} onChange={(e) => setGhWorkflow(e.target.value)} placeholder="deploy.yml or 12345" />
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant block mb-1">Git ref (branch/tag)</span>
+              <input className={inputCls} value={ghRef} onChange={(e) => setGhRef(e.target.value)} placeholder="main" />
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant block mb-1">GitHub Token</span>
+              <div className="flex gap-2">
+                <select className={inputCls} value={ghTokenId} onChange={(e) => setGhTokenId(e.target.value)}>
+                  <option value="">-- Manual (paste in Headers tab) --</option>
+                  {githubTokens.map((t) => (
+                    <option key={t.id} value={t.id}>{t.label} ({t.secret})</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-body-xs text-outline mt-1">
+                Select a saved token to auto-inject authorization header, or leave empty to paste manually.
+              </p>
+            </label>
+            <label className="block">
+              <span className="text-label-caps text-on-surface-variant block mb-1">Workflow inputs (JSON)</span>
+              <textarea
+                className={`${inputCls} font-code min-h-[80px]`}
+                value={ghInputs}
+                onChange={(e) => setGhInputs(e.target.value)}
+                placeholder='{"environment":"production"}'
+               />
+            </label>
+            <button
+              onClick={applyGitHubPreset}
+              className="w-full py-1.5 rounded-lg bg-primary text-on-primary text-body-sm disabled:opacity-50"
+            >
+              Apply GitHub Dispatch Preset
+            </button>
+          </div>
+        )}
+
         {err && <p className="text-error text-body-xs">{err}</p>}
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex justify-end gap-2 pt-2 border-t border-outline-variant/20">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-outline-variant/30 text-body-sm">
             Cancel
           </button>
           <button
             onClick={save}
-            disabled={busy || !accountId}
+            disabled={busy || !accountId || (tab === "gh" ? (!ghOwner || !ghRepo || !ghWorkflow) : (!title || !url))}
             className="px-4 py-1.5 rounded-lg bg-primary text-on-primary text-body-sm disabled:opacity-50"
           >
             {busy ? "Creating..." : "Create Job"}

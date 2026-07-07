@@ -28,6 +28,7 @@ export interface AppConfig {
   port: number;
   logLevel: string;
   logFormat: "json" | "pretty";
+  logFile: string;
 
   apiSecret: string;
   tinyAuthEnabled: boolean;
@@ -140,6 +141,7 @@ export function loadConfig(
     port: numberOr(env.PORT, 8080),
     logLevel: env.LOG_LEVEL ?? "info",
     logFormat,
+    logFile: env.LOG_FILE ?? "./logs/app.log",
 
     apiSecret,
     tinyAuthEnabled,

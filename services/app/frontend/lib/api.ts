@@ -13,13 +13,39 @@ export interface Resource {
   disabled?: boolean;
 }
 
+export interface JobSchedule {
+  timezone?: string;
+  expiresAt?: number;
+  hours?: number[];
+  mdays?: number[];
+  minutes?: number[];
+  months?: number[];
+  wdays?: number[];
+}
+
+export type RequestMethodValue = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+export const REQUEST_METHODS: Record<RequestMethodValue, string> = {
+  0: "GET", 1: "POST", 2: "OPTIONS", 3: "HEAD", 4: "PUT",
+  5: "DELETE", 6: "TRACE", 7: "CONNECT", 8: "PATCH",
+};
+
+export interface ExtendedJobData {
+  headers?: Record<string, string>;
+  body?: string;
+}
+
 export interface JobMeta {
   id: string;
   accountId: string;
   title: string;
   url: string;
-  schedule?: unknown;
+  schedule?: JobSchedule;
   enabled: boolean;
+  requestMethod?: RequestMethodValue;
+  extendedData?: ExtendedJobData;
+  saveResponses?: boolean;
+  requestTimeout?: number;
   nextRunAt?: number;
   lastStatus?: "ok" | "failed" | "pending";
   tags: string[];

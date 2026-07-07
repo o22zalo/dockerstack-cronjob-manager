@@ -22,8 +22,13 @@ export function registerExecRoutes(app: App, c: Container) {
     if (!c.registry.resolve(req.params.name)) {
       return reply.code(404).send({ error: `handler not found or not allowed: ${req.params.name}` });
     }
-    const result = await c.runner.run({ type: "file", name: req.params.name }, req.body, "http");
-    return reply.code(result.status === "ok" ? 200 : 500).send(result);
+    try {
+      const result = await c.runner.run({ type: "file", name: req.params.name }, req.body, "http");
+      return reply.code(result.status === "ok" ? 200 : 500).send(result);
+    } catch (err) {
+      req.log.error({ err, reqId: req.id, handler: req.params.name }, "exec file handler failed");
+      return reply.code(500).send({ error: (err as Error).message });
+    }
   });
 
   // Run a registered fn handler directly.
@@ -31,16 +36,26 @@ export function registerExecRoutes(app: App, c: Container) {
     if (!c.fnRegistry.get(req.params.name)) {
       return reply.code(404).send({ error: `fn not found: ${req.params.name}` });
     }
-    const result = await c.runner.run({ type: "fn", name: req.params.name }, req.body, "http");
-    return reply.code(result.status === "ok" ? 200 : 500).send(result);
+    try {
+      const result = await c.runner.run({ type: "fn", name: req.params.name }, req.body, "http");
+      return reply.code(result.status === "ok" ? 200 : 500).send(result);
+    } catch (err) {
+      req.log.error({ err, reqId: req.id, handler: req.params.name }, "exec fn handler failed");
+      return reply.code(500).send({ error: (err as Error).message });
+    }
   });
 
   // Enqueue a job into the RTDB queue for async processing.
   app.post("/api/exec/enqueue", async (req, reply) => {
     const parsed = enqueueSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const key = await c.queue.enqueue(parsed.data.target, parsed.data.data ?? null);
-    return reply.code(202).send({ enqueued: true, key });
+    try {
+      const key = await c.queue.enqueue(parsed.data.target, parsed.data.data ?? null);
+      return reply.code(202).send({ enqueued: true, key });
+    } catch (err) {
+      req.log.error({ err, reqId: req.id, body: req.body }, "enqueue failed");
+      return reply.code(500).send({ error: (err as Error).message });
+    }
   });
 
   // Queue listing (for the Executor/Queue UI).

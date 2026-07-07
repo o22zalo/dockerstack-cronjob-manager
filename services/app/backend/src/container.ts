@@ -42,7 +42,7 @@ export function buildContainer(config: AppConfig, logger: Logger, rtdbOverride?:
     collections: new TaxonomyRepo(rtdb, "collections"),
   };
 
-  const jobs = new JobsService(rtdb, resources.accounts, config, logger);
+  const jobs = new JobsService(rtdb, resources.accounts, resources["github-tokens"], config, logger);
 
   const registry = new HandlerRegistry({
     dir: config.exec.handlersDir,

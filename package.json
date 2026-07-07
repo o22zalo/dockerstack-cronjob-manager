@@ -6,7 +6,14 @@
   "engines": {
     "node": ">=18"
   },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
   "scripts": {
+    "dev:backend": "cd services/app/backend && npm run dev",
+    "dev:frontend": "cd services/app/frontend && npm run dev",
+    "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "install:all": "cd services/app/backend && npm install && cd ../frontend && npm install",
     "dockerapp-validate:👇👇👇👇👇": "==dockerapp-validate==",
     "dockerapp-validate:env": "node docker-compose/scripts/validate-env.js",
     "dockerapp-validate:compose": "node docker-compose/scripts/validate-compose.js",

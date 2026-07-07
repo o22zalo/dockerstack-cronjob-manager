@@ -3,8 +3,7 @@ import type { Logger } from "../logger.js";
 import type { AppConfig } from "../config/env.js";
 import { CronjobClient, type RawCronJob } from "./client.js";
 import { ResourceRepo } from "../lib/resourceRepo.js";
-import type { CronJobMeta, JobLogEntry } from "../types.js";
-import { nanoid } from "nanoid";
+import type { CronJobMeta, JobLogEntry, RequestMethodValue, ExtendedJobData, JobSchedule } from "../types.js";
 
 /**
  * Cronjob manager: wraps the per-account cronjob.org client and mirrors job
@@ -15,6 +14,7 @@ export class JobsService {
   constructor(
     private rtdb: RtdbClient,
     private accountsRepo: ResourceRepo,
+    private githubTokensRepo: ResourceRepo,
     private config: Pick<AppConfig, "cronjobApiBase">,
     private logger: Logger,
   ) {}
@@ -37,6 +37,10 @@ export class JobsService {
       url: raw.url,
       schedule: raw.schedule ?? prev?.schedule,
       enabled: raw.enabled,
+      requestMethod: raw.requestMethod as RequestMethodValue | undefined ?? prev?.requestMethod,
+      extendedData: raw.extendedData as ExtendedJobData | undefined ?? prev?.extendedData,
+      saveResponses: raw.saveResponses ?? prev?.saveResponses,
+      requestTimeout: raw.requestTimeout ?? prev?.requestTimeout,
       nextRunAt: raw.nextExecution ? raw.nextExecution * 1000 : prev?.nextRunAt,
       lastStatus: raw.lastStatus === 1 ? "ok" : raw.lastStatus ? "failed" : prev?.lastStatus,
       tags: prev?.tags ?? [],
@@ -49,7 +53,10 @@ export class JobsService {
   /** Pull all jobs for an account from cronjob.org into RTDB. */
   async sync(accountId: string): Promise<CronJobMeta[]> {
     const client = await this.clientFor(accountId);
-    const raw = await client.listJobs();
+    const { jobs: raw, someFailed } = await client.listJobs();
+    if (someFailed) {
+      this.logger.warn({ accountId }, "cronjob.org returned someFailed=true, list may be incomplete");
+    }
     const out: CronJobMeta[] = [];
     for (const j of raw) {
       const prev = (await this.rtdb.get<CronJobMeta>(`jobs/${accountId}/${j.jobId}`)) ?? undefined;
@@ -95,23 +102,62 @@ export class JobsService {
     accountId: string;
     title: string;
     url: string;
-    schedule?: unknown;
+    schedule?: JobSchedule;
     enabled?: boolean;
+    requestMethod?: RequestMethodValue;
+    extendedData?: ExtendedJobData;
+    saveResponses?: boolean;
+    requestTimeout?: number;
+    githubTokenId?: string;
     tags?: string[];
     project?: string;
     collection?: string;
   }): Promise<CronJobMeta> {
+    // Resolve GitHub token if provided, inject into extendedData headers
+    let extendedData = input.extendedData;
+    if (input.githubTokenId) {
+      const token = await this.githubTokensRepo.getRaw(input.githubTokenId);
+      if (!token || token.type !== "github_token") throw new Error(`GitHub token not found: ${input.githubTokenId}`);
+      extendedData = {
+        ...extendedData,
+        headers: {
+          ...extendedData?.headers,
+          authorization: `Bearer ${token.secret}`,
+          accept: "application/vnd.github.v3+json",
+        },
+      };
+    }
     const client = await this.clientFor(input.accountId);
-    const raw = await client.createJob({
+    const { jobId } = await client.createJob({
       title: input.title,
       url: input.url,
       enabled: input.enabled ?? true,
       schedule: input.schedule,
+      requestMethod: input.requestMethod,
+      extendedData,
+      saveResponses: input.saveResponses,
+      requestTimeout: input.requestTimeout,
     });
-    const meta = this.toMeta(input.accountId, raw);
-    meta.tags = input.tags ?? [];
-    meta.project = input.project;
-    meta.collection = input.collection;
+    // Fetch full job details to get read-only fields (nextExecution, etc.)
+    const raw = await client.getJob(jobId);
+    const meta: CronJobMeta = {
+      id: String(jobId),
+      accountId: input.accountId,
+      title: input.title,
+      url: input.url,
+      schedule: input.schedule,
+      enabled: raw?.enabled ?? (input.enabled ?? true),
+      requestMethod: input.requestMethod,
+      extendedData: input.extendedData,
+      saveResponses: input.saveResponses,
+      requestTimeout: input.requestTimeout,
+      nextRunAt: raw?.nextExecution ? raw.nextExecution * 1000 : undefined,
+      lastStatus: raw?.lastStatus === 1 ? "ok" : raw?.lastStatus ? "failed" : undefined,
+      tags: input.tags ?? [],
+      project: input.project,
+      collection: input.collection,
+      updatedAt: Date.now(),
+    };
     await this.rtdb.set(`jobs/${input.accountId}/${meta.id}`, meta);
     return meta;
   }
@@ -119,7 +165,11 @@ export class JobsService {
   async patch(jobId: string, patch: {
     title?: string;
     url?: string;
-    schedule?: unknown;
+    schedule?: JobSchedule;
+    requestMethod?: RequestMethodValue;
+    extendedData?: ExtendedJobData;
+    saveResponses?: boolean;
+    requestTimeout?: number;
     tags?: string[];
     project?: string;
     collection?: string;
@@ -127,18 +177,24 @@ export class JobsService {
     const meta = await this.findJob(jobId);
     if (!meta) return null;
     const client = await this.clientFor(meta.accountId);
-    if (patch.title !== undefined || patch.url !== undefined || patch.schedule !== undefined) {
-      await client.updateJob(jobId, {
-        title: patch.title,
-        url: patch.url,
-        schedule: patch.schedule,
-      });
-    }
+    await client.updateJobDetailed(jobId, {
+      title: patch.title,
+      url: patch.url,
+      schedule: patch.schedule,
+      requestMethod: patch.requestMethod,
+      extendedData: patch.extendedData,
+      saveResponses: patch.saveResponses,
+      requestTimeout: patch.requestTimeout,
+    });
     const updated: CronJobMeta = {
       ...meta,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.url !== undefined ? { url: patch.url } : {}),
       ...(patch.schedule !== undefined ? { schedule: patch.schedule } : {}),
+      ...(patch.requestMethod !== undefined ? { requestMethod: patch.requestMethod } : {}),
+      ...(patch.extendedData !== undefined ? { extendedData: patch.extendedData } : {}),
+      ...(patch.saveResponses !== undefined ? { saveResponses: patch.saveResponses } : {}),
+      ...(patch.requestTimeout !== undefined ? { requestTimeout: patch.requestTimeout } : {}),
       ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
       ...(patch.project !== undefined ? { project: patch.project } : {}),
       ...(patch.collection !== undefined ? { collection: patch.collection } : {}),
@@ -174,9 +230,9 @@ export class JobsService {
     const meta = await this.findJob(jobId);
     if (!meta) return [];
     const client = await this.clientFor(meta.accountId);
-    const raw = await client.getJobLogs(jobId);
+    const { history: raw } = await client.getJobLogs(jobId);
     const entries: JobLogEntry[] = raw.map((r) => ({
-      id: String(r.jobLogId ?? nanoid(8)),
+      id: String(r.identifier),
       jobId,
       timestamp: r.date * 1000,
       status: r.status === 1 ? "ok" : "failed",

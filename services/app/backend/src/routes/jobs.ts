@@ -2,21 +2,50 @@ import type { App } from "./appType.js";
 import { z } from "zod";
 import type { Container } from "../container.js";
 
+const scheduleSchema = z.object({
+  timezone: z.string().optional(),
+  expiresAt: z.number().int().optional(),
+  hours: z.array(z.number().int().min(-1).max(23)).optional(),
+  mdays: z.array(z.number().int().min(-1).max(31)).optional(),
+  minutes: z.array(z.number().int().min(-1).max(59)).optional(),
+  months: z.array(z.number().int().min(-1).max(12)).optional(),
+  wdays: z.array(z.number().int().min(-1).max(6)).optional(),
+}).optional();
+
+const extendedDataSchema = z.object({
+  headers: z.record(z.string()).optional(),
+  body: z.string().optional(),
+}).optional();
+
+const requestMethodSchema = z.union([
+  z.literal(0), z.literal(1), z.literal(2), z.literal(3),
+  z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8),
+]).optional();
+
 const createSchema = z.object({
   accountId: z.string().min(1),
   title: z.string().min(1),
   url: z.string().url(),
-  schedule: z.unknown().optional(),
+  schedule: scheduleSchema,
   enabled: z.boolean().optional(),
+  requestMethod: requestMethodSchema,
+  extendedData: extendedDataSchema,
+  saveResponses: z.boolean().optional(),
+  requestTimeout: z.number().int().min(1).max(300).optional(),
   tags: z.array(z.string()).optional(),
   project: z.string().optional(),
   collection: z.string().optional(),
+  githubTokenId: z.string().optional(),
 });
 
 const patchSchema = z.object({
   title: z.string().optional(),
   url: z.string().url().optional(),
-  schedule: z.unknown().optional(),
+  schedule: scheduleSchema,
+  requestMethod: requestMethodSchema,
+  extendedData: extendedDataSchema,
+  saveResponses: z.boolean().optional(),
+  requestTimeout: z.number().int().min(1).max(300).optional(),
   tags: z.array(z.string()).optional(),
   project: z.string().optional(),
   collection: z.string().optional(),
@@ -34,6 +63,7 @@ export function registerJobRoutes(app: App, c: Container) {
     try {
       return reply.code(201).send(await c.jobs.create(parsed.data));
     } catch (err) {
+      req.log.error({ err, reqId: req.id, body: req.body }, "create job failed");
       return reply.code(502).send({ error: (err as Error).message });
     }
   });
@@ -44,6 +74,7 @@ export function registerJobRoutes(app: App, c: Container) {
     try {
       return await c.jobs.sync(accountId);
     } catch (err) {
+      req.log.error({ err, reqId: req.id, accountId }, "sync jobs failed");
       return reply.code(502).send({ error: (err as Error).message });
     }
   });
@@ -84,6 +115,7 @@ export function registerJobRoutes(app: App, c: Container) {
     try {
       return await c.jobs.logs(req.params.jobId);
     } catch (err) {
+      req.log.error({ err, reqId: req.id, jobId: req.params.jobId }, "fetch job logs failed");
       return reply.code(502).send({ error: (err as Error).message });
     }
   });

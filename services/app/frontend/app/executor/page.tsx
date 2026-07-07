@@ -190,11 +190,11 @@ function RunModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full max-w-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-xl w-full max-w-lg">
         <div className="flex justify-between items-center px-4 py-3 border-b border-outline-variant/20">
           <h3 className="text-h2 text-on-surface font-code">
             Run {target.type}:{target.name}

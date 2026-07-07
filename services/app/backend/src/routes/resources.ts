@@ -54,8 +54,13 @@ export function registerResourceRoutes(app: App, c: Container) {
     if (!repo) return reply.code(404).send({ error: "unknown resource type" });
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const created = await repo.create(parsed.data);
-    return reply.code(201).send(created);
+    try {
+      const created = await repo.create(parsed.data);
+      return reply.code(201).send(created);
+    } catch (err) {
+      req.log.error({ err, reqId: req.id, type: req.params.type, body: req.body }, "create resource failed");
+      throw err;
+    }
   });
 
   app.patch<{ Params: { type: string; id: string } }>(
@@ -93,6 +98,7 @@ export function registerResourceRoutes(app: App, c: Container) {
       try {
         report = parseImport(parsed.data.data, parsed.data.format);
       } catch (err) {
+        req.log.error({ err, reqId: req.id, type: req.params.type }, "import parse failed");
         return reply.code(400).send({ error: (err as Error).message });
       }
       const created = await repo.bulkCreate(report.valid);

@@ -11,7 +11,7 @@ These rules are mandatory for ANY AI Agent (Codex, Claude Code, Antigravity, Cur
 
 Use conversational summary content (not commit-style), aligned with what the AI Agent says to the user.
 
-Required structure in `.opushforce.message`:
+Required structure in `.git/vstool-commit-template.txt`:
 
 1. Opening line confirming rule-following, for example:
    `feat:<tóm tắt nội dung>` and/or `fix:<tóm tắt nội dung>`
@@ -33,4 +33,4 @@ Formatting rules:
 
 ## 3) Completion gate
 
-The AI Agent should treat the task as incomplete until `.opushforce.message` is updated (write or append) to reflect the latest work.
+The AI Agent should treat the task as incomplete until `.git/vstool-commit-template.txt` is updated (write or append) to reflect the latest work.

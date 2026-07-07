@@ -22,6 +22,30 @@ export function buildServer(c: Container): App {
 
   void app.register(cors, { origin: true });
 
+  // Global error handler — log all unhandled route errors to file
+  app.setErrorHandler((err, req, reply) => {
+    req.log.error({
+      err,
+      reqId: req.id,
+      method: req.method,
+      url: req.url,
+      body: req.body,
+    }, "unhandled route error");
+    reply.code(err.statusCode && err.statusCode >= 400 ? err.statusCode : 500).send({ error: err.message });
+  });
+
+  // Log every completed request
+  app.addHook("onResponse", (req, reply, done) => {
+    req.log.info({
+      reqId: req.id,
+      method: req.method,
+      url: req.url,
+      statusCode: reply.statusCode,
+      responseTime: Math.round(reply.elapsedTime),
+    }, "request completed");
+    done();
+  });
+
   // API secret guard for everything under /api
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api")) return;
